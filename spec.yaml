@@ -1,0 +1,73 @@
+schemaVersion: "2"
+kind: mixin
+name: rv
+displayName: rv ruby and gem manager
+description: "rv, a very fast Ruby and gem manager (https://rv.dev) — installs the rv CLI and wires up shell activation so ruby/gem commands and .ruby-version switching work out of the box."
+
+permissions:
+  network:
+    allow:
+      # rv release download (install) and rv-ruby tarballs for `rv ruby install`.
+      - github.com
+      # Ruby version resolution (rv-ruby releases/latest; rubyinstaller2/jruby on
+      # other platforms). Without it `rv ruby install` / `rv run` fail, even for
+      # an exact version.
+      - api.github.com
+      # Release-asset redirect targets. rv and rv-ruby were confirmed to 302 to
+      # release-assets; objects is allowed too, as GitHub may switch hosts.
+      - objects.githubusercontent.com
+      - release-assets.githubusercontent.com
+      # Default gem source for `rv clean-install`, `rvx`, `rv tool install`.
+      # Confirmed: gems, gemspecs and dependency API are served here directly,
+      # no separate CDN host (unlike e.g. PyPI).
+      - rubygems.org
+
+setup:
+  install:
+    - command: |
+        set -euo pipefail
+        apt-get update
+        apt-get install -y --no-install-recommends xz-utils
+        rm -rf /var/lib/apt/lists/*
+      user: "0"
+      description: "Install xz-utils (to extract rv's release .tar.xz, and its runtime Ruby downloads)"
+    # Keep >= v0.7.1: older aarch64 builds SIGABRT on 16 KiB-page hosts (e.g. Apple
+    # Virtualization.framework), https://github.com/spinel-coop/rv/issues/791.
+    # To bump: change RV_VERSION and both SHA256 (from rv-<target>.tar.xz.sha256).
+    - command: |
+        set -euo pipefail
+        RV_VERSION=0.7.1
+
+        case "$(uname -m)" in
+          aarch64)
+            TARGET=aarch64-unknown-linux-gnu
+            SHA256=622a06f978ecbe4f99fb733ab0b4d63dc9e9413c0888ce9b1aa37f6ca06e1fe6
+            ;;
+          x86_64)
+            TARGET=x86_64-unknown-linux-gnu
+            SHA256=f5cc7e94d349547bc80b0cdcac60dcad0503837d5ce0f7da181d892da08df1b8
+            ;;
+          *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+        esac
+
+        TMPDIR=$(mktemp -d)
+        trap 'rm -rf "$TMPDIR"' EXIT
+
+        curl --proto '=https' --tlsv1.2 -fsSL \
+          "https://github.com/spinel-coop/rv/releases/download/v${RV_VERSION}/rv-${TARGET}.tar.xz" \
+          -o "$TMPDIR/rv.tar.xz"
+        echo "${SHA256}  $TMPDIR/rv.tar.xz" | sha256sum -c -
+        tar -xJf "$TMPDIR/rv.tar.xz" -C "$TMPDIR"
+
+        install -m 0755 "$TMPDIR/rv-${TARGET}/rv" /usr/local/bin/rv
+        install -m 0755 "$TMPDIR/rv-${TARGET}/rvx" /usr/local/bin/rvx
+        rv --version
+      user: "0"
+      description: "Install rv CLI v0.7.1 prebuilt binary to /usr/local/bin, version+digest pinned"
+    # Interactive shells: PATH/GEM_HOME, .ruby-version switching, completions.
+    - command: |
+        set -euo pipefail
+        grep -qF 'rv shell init bash' ~/.bashrc 2>/dev/null || \
+          printf '\n# rv (added by sbx-rv-kit)\neval "$(rv shell init bash)"\neval "$(rv shell completions bash)"\n' >> ~/.bashrc
+      user: "1000"
+      description: "Hook `rv shell init/completions bash` into ~/.bashrc for interactive shells"
