@@ -21,6 +21,7 @@ permissions:
       # Confirmed: gems, gemspecs and dependency API are served here directly,
       # no separate CDN host (unlike e.g. PyPI).
       - rubygems.org
+      - index.rubygems.org
 
 setup:
   install:
